@@ -1,0 +1,31 @@
+{"timestamp":"2025-08-19 07:14:13","environment":"PRUEBAS","type":"info","message":"Stripe configurado en modo desarrollo","data":{"public_key_configured":true,"secret_key_configured":true}}
+{"timestamp":"2025-08-19 07:16:17","environment":"PRUEBAS","type":"info","message":"Stripe configurado en modo desarrollo","data":{"public_key_configured":true,"secret_key_configured":true}}
+{"timestamp":"2025-08-19 07:21:53","environment":"PRUEBAS","type":"info","message":"Stripe configurado en modo desarrollo","data":{"public_key_configured":true,"secret_key_configured":true}}
+{"timestamp":"2025-08-19 07:23:05","environment":"PRUEBAS","type":"info","message":"Stripe configurado en modo desarrollo","data":{"public_key_configured":true,"secret_key_configured":true}}
+{"timestamp":"2025-08-19 07:23:53","environment":"PRUEBAS","type":"info","message":"Stripe configurado en modo desarrollo","data":{"public_key_configured":true,"secret_key_configured":true}}
+{"timestamp":"2025-08-19 07:24:09","environment":"PRUEBAS","type":"info","message":"Stripe configurado en modo desarrollo","data":{"public_key_configured":true,"secret_key_configured":true}}
+{"timestamp":"2025-08-19 07:26:23","environment":"PRUEBAS","type":"info","message":"Stripe configurado en modo desarrollo","data":{"public_key_configured":true,"secret_key_configured":true}}
+{"timestamp":"2025-08-19 07:26:29","environment":"PRUEBAS","type":"info","message":"Stripe configurado en modo desarrollo","data":{"public_key_configured":true,"secret_key_configured":true}}
+{"timestamp":"2025-08-19 07:27:52","environment":"PRUEBAS","type":"info","message":"Stripe configurado en modo desarrollo","data":{"public_key_configured":true,"secret_key_configured":true}}
+{"timestamp":"2025-08-19 07:28:23","environment":"PRUEBAS","type":"info","message":"Stripe configurado en modo desarrollo","data":{"public_key_configured":true,"secret_key_configured":true}}
+{"timestamp":"2025-08-19 07:28:35","environment":"PRUEBAS","type":"info","message":"Stripe configurado en modo desarrollo","data":{"public_key_configured":true,"secret_key_configured":true}}
+{"timestamp":"2025-08-19 07:32:44","environment":"PRUEBAS","type":"info","message":"Stripe configurado en modo desarrollo","data":{"public_key_configured":true,"secret_key_configured":true}}
+{"timestamp":"2025-08-19 07:32:45","environment":"PRUEBAS","type":"info","message":"Stripe configurado en modo desarrollo","data":{"public_key_configured":true,"secret_key_configured":true}}
+{"timestamp":"2025-08-19 07:33:47","environment":"PRUEBAS","type":"info","message":"Stripe configurado en modo desarrollo","data":{"public_key_configured":true,"secret_key_configured":true}}
+{"timestamp":"2025-08-19 07:33:48","environment":"PRUEBAS","type":"success","message":"Nuevo customer creado en Stripe","data":{"stripe_customer_id":"cus_StVBCHleb2yA4U","user_id":13,"email":"jc.reyesm8@gmail.com"}}
+{"timestamp":"2025-08-19 07:33:48","environment":"PRUEBAS","type":"success","message":"Payment Intent creado","data":{"payment_intent_id":"pi_3RxiB618BPFUUmSa0CG31eYM","amount":73.2,"customer_id":"cus_StVBCHleb2yA4U","user_id":13}}
+{"timestamp":"2025-08-19 07:33:50","environment":"PRUEBAS","type":"info","message":"Stripe configurado en modo desarrollo","data":{"public_key_configured":true,"secret_key_configured":true}}
+{"timestamp":"2025-08-19 07:33:51","environment":"PRUEBAS","type":"success","message":"Pedido creado exitosamente","data":{"payment_intent_id":"pi_3RxiB618BPFUUmSa0CG31eYM","order_id":"11","order_number":"PED-2025-000010","amount":73.2,"user_id":13}}
+{"timestamp":"2025-08-19 07:34:15","environment":"PRUEBAS","type":"info","message":"Stripe configurado en modo desarrollo","data":{"public_key_configured":true,"secret_key_configured":true}}
+{"timestamp":"2025-08-19 07:35:28","environment":"PRUEBAS","type":"info","message":"Stripe configurado en modo desarrollo","data":{"public_key_configured":true,"secret_key_configured":true}}
+{"timestamp":"2025-08-19 07:35:28","environment":"PRUEBAS","type":"info","message":"Stripe configurado en modo desarrollo","data":{"public_key_configured":true,"secret_key_configured":true}}
+{"timestamp":"2025-08-19 07:41:17","environment":"PRUEBAS","type":"info","message":"Stripe configurado en modo desarrollo","data":{"public_key_configured":true,"secret_key_configured":true}}
+{"timestamp":"2025-08-19 07:41:19","environment":"PRUEBAS","type":"success","message":"Payment Intent creado","data":{"payment_intent_id":"pi_3RxiIN18BPFUUmSa0ehLrjpg","amount":67.4,"customer_id":"cus_StVBCHleb2yA4U","user_id":13}}
+{"timestamp":"2025-08-19 07:41:20","environment":"PRUEBAS","type":"info","message":"Stripe configurado en modo desarrollo","data":{"public_key_configured":true,"secret_key_configured":true}}
+{"timestamp":"2025-08-19 07:41:21","environment":"PRUEBAS","type":"success","message":"Pedido creado exitosamente","data":{"payment_intent_id":"pi_3RxiIN18BPFUUmSa0ehLrjpg","order_id":"12","order_number":"PED-2025-000011","amount":67.4,"user_id":13}}
+{"timestamp":"2025-08-19 07:56:51","environment":"PRUEBAS","type":"info","message":"Stripe configurado en modo desarrollo","data":{"public_key_configured":true,"secret_key_configured":true}}
+{"timestamp":"2025-08-19 07:56:51","environment":"PRUEBAS","type":"info","message":"Stripe configurado en modo desarrollo","data":{"public_key_configured":true,"secret_key_configured":true}}
+{"timestamp":"2025-08-19 07:57:18","environment":"PRUEBAS","type":"info","message":"Stripe configurado en modo desarrollo","data":{"public_key_configured":true,"secret_key_configured":true}}
+{"timestamp":"2025-08-19 07:57:22","environment":"PRUEBAS","type":"success","message":"Payment Intent creado","data":{"payment_intent_id":"pi_3RxiXu18BPFUUmSa0v0BfNfK","amount":73.2,"customer_id":"cus_StVBCHleb2yA4U","user_id":13}}
+{"timestamp":"2025-08-19 07:57:23","environment":"PRUEBAS","type":"info","message":"Stripe configurado en modo desarrollo","data":{"public_key_configured":true,"secret_key_configured":true}}
+{"timestamp":"2025-08-19 07:57:24","environment":"PRUEBAS","type":"success","message":"Pedido creado exitosamente","data":{"payment_intent_id":"pi_3RxiXu18BPFUUmSa0v0BfNfK","order_id":"13","order_number":"PED-2025-000012","amount":73.2,"user_id":13}}

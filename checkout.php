@@ -1,7 +1,8 @@
 <?php
-// checkout.php - Sistema de checkout completo
+// checkout.php - Sistema de checkout integrado con Stripe
 session_start();
 require_once 'config/database.php';
+require_once 'config/stripe_config.php';
 
 // Verificar que el usuario esté logueado
 if (!isset($_SESSION['usuario_id'])) {
@@ -66,20 +67,6 @@ try {
     error_log("Error obteniendo direcciones: " . $e->getMessage());
 }
 
-// Obtener métodos de pago del usuario
-$metodos_pago = [];
-try {
-    $stmt = $conn->prepare("
-        SELECT * FROM metodos_pago 
-        WHERE id_cliente = ? AND activo = 1 
-        ORDER BY es_principal DESC, created_at DESC
-    ");
-    $stmt->execute([$_SESSION['usuario_id']]);
-    $metodos_pago = $stmt->fetchAll();
-} catch (Exception $e) {
-    error_log("Error obteniendo métodos de pago: " . $e->getMessage());
-}
-
 // Obtener cupones disponibles
 $cupones_disponibles = [];
 try {
@@ -124,6 +111,17 @@ if ($subtotal >= $envio_gratis_minimo) {
 
 $iva = ($subtotal - $descuento_aplicado) * $iva_porcentaje;
 $total = $subtotal - $descuento_aplicado + $costo_envio + $iva;
+
+// Validar configuración de Stripe
+$stripe_config_valid = false;
+$stripe_config = null;
+try {
+    $stripe_config = getStripeConfig();
+    validateStripeConfig();
+    $stripe_config_valid = true;
+} catch (Exception $e) {
+    error_log("Error configuración Stripe: " . $e->getMessage());
+}
 ?>
 
 <!DOCTYPE html>
@@ -137,6 +135,9 @@ $total = $subtotal - $descuento_aplicado + $costo_envio + $iva;
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <!-- Font Awesome -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    
+    <!-- Stripe JS -->
+    <script src="https://js.stripe.com/v3/"></script>
     
     <style>
         .checkout-header {
@@ -183,7 +184,7 @@ $total = $subtotal - $descuento_aplicado + $costo_envio + $iva;
             background: linear-gradient(45deg, #28a745, #20c997);
         }
         
-        .address-card, .payment-card {
+        .address-card {
             border: 2px solid #e9ecef;
             border-radius: 10px;
             padding: 20px;
@@ -192,12 +193,12 @@ $total = $subtotal - $descuento_aplicado + $costo_envio + $iva;
             transition: all 0.3s ease;
         }
         
-        .address-card:hover, .payment-card:hover {
+        .address-card:hover {
             border-color: #667eea;
             box-shadow: 0 4px 15px rgba(102, 126, 234, 0.1);
         }
         
-        .address-card.selected, .payment-card.selected {
+        .address-card.selected {
             border-color: #28a745;
             background: #f8fff9;
         }
@@ -221,7 +222,7 @@ $total = $subtotal - $descuento_aplicado + $costo_envio + $iva;
         
         .summary-item {
             display: flex;
-            justify-content: between;
+            justify-content: space-between;
             padding: 10px 0;
             border-bottom: 1px solid #dee2e6;
         }
@@ -275,12 +276,6 @@ $total = $subtotal - $descuento_aplicado + $costo_envio + $iva;
             border-left: none;
         }
         
-        .progress-bar {
-            background: linear-gradient(45deg, #667eea, #764ba2);
-            height: 6px;
-            border-radius: 3px;
-        }
-        
         .envio-gratis-banner {
             background: linear-gradient(45deg, #28a745, #20c997);
             color: white;
@@ -288,6 +283,75 @@ $total = $subtotal - $descuento_aplicado + $costo_envio + $iva;
             border-radius: 10px;
             margin-bottom: 20px;
             text-align: center;
+        }
+        
+        /* Estilos para Stripe Elements */
+        .stripe-payment-section {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 25px;
+            margin-top: 20px;
+        }
+        
+        .stripe-element {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #dee2e6;
+            margin-bottom: 15px;
+            transition: all 0.3s ease;
+        }
+        
+        .stripe-element:hover,
+        .stripe-element:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        .stripe-element.StripeElement--invalid {
+            border-color: #dc3545;
+        }
+        
+        .stripe-element.StripeElement--complete {
+            border-color: #28a745;
+        }
+        
+        .stripe-error {
+            color: #dc3545;
+            font-size: 0.875rem;
+            margin-top: 5px;
+        }
+        
+        .stripe-success {
+            color: #28a745;
+            font-size: 0.875rem;
+            margin-top: 5px;
+        }
+        
+        .payment-method-icons {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-top: 15px;
+        }
+        
+        .stripe-mode-badge {
+            background: #17a2b8;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        
+        .stripe-mode-badge.production {
+            background: #28a745;
+        }
+        
+        .stripe-mode-badge.sandbox {
+            background: #ffc107;
+            color: #212529;
         }
         
         @media (max-width: 768px) {
@@ -334,7 +398,14 @@ $total = $subtotal - $descuento_aplicado + $costo_envio + $iva;
                     <h1 class="display-6 mb-3">
                         <i class="fas fa-credit-card me-3"></i> Finalizar Compra
                     </h1>
-                    <p class="lead">Completa tu pedido de forma segura y rápida</p>
+                    <p class="lead">
+                        Completa tu pedido de forma segura con Stripe
+                        <?php if ($stripe_config_valid): ?>
+                            <span class="stripe-mode-badge <?= strtolower(STRIPE_MODE === 'PRODUCCIÓN' ? 'production' : 'sandbox') ?>">
+                                <?= STRIPE_MODE ?>
+                            </span>
+                        <?php endif; ?>
+                    </p>
                 </div>
                 <div class="col-md-4 text-md-end">
                     <div class="bg-white text-dark rounded p-3 d-inline-block">
@@ -473,71 +544,55 @@ $total = $subtotal - $descuento_aplicado + $costo_envio + $iva;
                     <?php endif; ?>
                     
                     <div class="text-end mt-3">
-                        <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#addAddressModal">
+                        <a href="perfil.php" class="btn btn-outline-primary">
                             <i class="fas fa-plus"></i> Agregar Nueva Dirección
-                        </button>
+                        </a>
                     </div>
                 </div>
 
-                <!-- Paso 3: Método de Pago -->
+                <!-- Paso 3: Método de Pago con Stripe -->
                 <div class="checkout-step">
                     <div class="step-header">
                         <div class="step-number" id="step-3-number">3</div>
                         <div>
                             <h4 class="mb-0">Método de Pago</h4>
-                            <p class="text-muted mb-0">Selecciona cómo quieres pagar</p>
+                            <p class="text-muted mb-0">Pago seguro procesado por Stripe</p>
                         </div>
                     </div>
                     
-                    <?php if (count($metodos_pago) > 0): ?>
-                        <div class="payment-methods-list">
-                            <?php foreach ($metodos_pago as $metodo): ?>
-                                <div class="payment-card" data-payment-id="<?= $metodo['id'] ?>" 
-                                     onclick="selectPayment(<?= $metodo['id'] ?>)"
-                                     <?= $metodo['es_principal'] ? 'id="default-payment"' : '' ?>>
-                                    
-                                    <div class="d-flex justify-content-between align-items-center">
-                                        <div class="d-flex align-items-center">
-                                            <i class="fas fa-credit-card fa-2x me-3 text-primary"></i>
-                                            <div>
-                                                <div class="d-flex align-items-center mb-1">
-                                                    <h6 class="mb-0 me-2">
-                                                        <?= htmlspecialchars($metodo['nombre_tarjeta']) ?> 
-                                                        •••• <?= htmlspecialchars($metodo['ultimos_4_digitos']) ?>
-                                                    </h6>
-                                                    <?php if ($metodo['es_principal']): ?>
-                                                        <span class="principal-badge">Principal</span>
-                                                    <?php endif; ?>
-                                                </div>
-                                                <small class="text-muted">
-                                                    <?= htmlspecialchars($metodo['nombre_titular']) ?> | 
-                                                    Exp: <?= $metodo['mes_expiracion'] ?>/<?= $metodo['ano_expiracion'] ?>
-                                                </small>
-                                            </div>
-                                        </div>
-                                        
-                                        <div class="form-check">
-                                            <input class="form-check-input" type="radio" 
-                                                   name="metodo_pago" value="<?= $metodo['id'] ?>"
-                                                   id="pay_<?= $metodo['id'] ?>"
-                                                   <?= $metodo['es_principal'] ? 'checked' : '' ?>>
-                                        </div>
-                                    </div>
+                    <div class="stripe-payment-section">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <label for="card-element" class="form-label">
+                                    <i class="fas fa-credit-card"></i> Información de la Tarjeta
+                                </label>
+                                <div id="card-element" class="stripe-element">
+                                    <!-- Stripe Elements insertará aquí los campos de la tarjeta -->
                                 </div>
-                            <?php endforeach; ?>
+                                <div id="card-errors" class="stripe-error" role="alert"></div>
+                                <div id="card-success" class="stripe-success" style="display: none;"></div>
+                            </div>
+                            <div class="col-md-6">
+                                <h6>Métodos de pago aceptados:</h6>
+                                <div class="payment-method-icons">
+                                    <i class="fab fa-cc-visa fa-2x text-primary" title="Visa"></i>
+                                    <i class="fab fa-cc-mastercard fa-2x text-warning" title="Mastercard"></i>
+                                    <i class="fab fa-cc-amex fa-2x text-info" title="American Express"></i>
+                                </div>
+                                
+                                <?php if (STRIPE_MODE !== 'PRODUCCIÓN'): ?>
+                                    <div class="mt-3">
+                                        <small class="text-info">
+                                            <i class="fas fa-info-circle"></i>
+                                            <strong>Modo de prueba:</strong><br>
+                                            Usa: 4242 4242 4242 4242<br>
+                                            CVV: cualquier 3 dígitos<br>
+                                            Fecha: cualquier fecha futura
+                                        </small>
+                                    </div>
+                                <?php endif; ?>
+                            </div>
                         </div>
-                    <?php else: ?>
-                        <div class="alert alert-warning">
-                            <i class="fas fa-exclamation-triangle"></i>
-                            <strong>No tienes métodos de pago registrados</strong><br>
-                            Necesitas agregar al menos un método de pago para continuar.
-                        </div>
-                    <?php endif; ?>
-                    
-                    <div class="text-end mt-3">
-                        <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#addPaymentModal">
-                            <i class="fas fa-plus"></i> Agregar Método de Pago
-                        </button>
                     </div>
                 </div>
 
@@ -640,46 +695,21 @@ $total = $subtotal - $descuento_aplicado + $costo_envio + $iva;
                     </div>
                     
                     <button class="btn btn-checkout w-100 mt-4" id="btn-finalizar" 
-                            onclick="finalizarCompra()" 
-                            <?= (count($direcciones) === 0 || count($metodos_pago) === 0) ? 'disabled' : '' ?>>
-                        <i class="fas fa-lock"></i> Finalizar Compra Segura
+                            onclick="procesarPagoStripe()" disabled>
+                        <i class="fas fa-spinner fa-spin"></i> Cargando Stripe...
                     </button>
                     
                     <div class="text-center mt-3">
                         <small class="text-muted">
                             <i class="fas fa-shield-alt text-success"></i>
-                            Compra 100% segura y protegida
+                            Compra 100% segura protegida por Stripe
                         </small>
                     </div>
                     
-                    <!-- Métodos de pago aceptados -->
+                    <!-- Información de seguridad -->
                     <div class="text-center mt-4">
-                        <h6>Aceptamos:</h6>
-                        <div class="d-flex justify-content-center gap-2">
-                            <i class="fab fa-cc-visa fa-2x text-primary"></i>
-                            <i class="fab fa-cc-mastercard fa-2x text-warning"></i>
-                            <i class="fab fa-cc-amex fa-2x text-info"></i>
-                            <i class="fas fa-university fa-2x text-secondary"></i>
-                        </div>
+                        <img src="https://img.shields.io/badge/Secured%20by-Stripe-626cd9?style=flat&logo=stripe" alt="Secured by Stripe" class="img-fluid">
                     </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Modal para agregar dirección (simplificado) -->
-    <div class="modal fade" id="addAddressModal" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">Agregar Método de Pago</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <p class="text-muted">Para una experiencia completa, ve a tu perfil para gestionar métodos de pago.</p>
-                    <a href="perfil.php" class="btn btn-primary w-100">
-                        <i class="fas fa-credit-card"></i> Ir a Mi Perfil
-                    </a>
                 </div>
             </div>
         </div>
@@ -691,7 +721,6 @@ $total = $subtotal - $descuento_aplicado + $costo_envio + $iva;
     <script>
         // Variables globales
         let selectedAddressId = <?= count($direcciones) > 0 ? ($direcciones[0]['es_principal'] ? $direcciones[0]['id'] : $direcciones[0]['id']) : 'null' ?>;
-        let selectedPaymentId = <?= count($metodos_pago) > 0 ? ($metodos_pago[0]['es_principal'] ? $metodos_pago[0]['id'] : $metodos_pago[0]['id']) : 'null' ?>;
         let appliedCoupon = null;
         let orderTotals = {
             subtotal: <?= $subtotal ?>,
@@ -700,6 +729,149 @@ $total = $subtotal - $descuento_aplicado + $costo_envio + $iva;
             tax: <?= $iva ?>,
             total: <?= $total ?>
         };
+
+        // Variables de Stripe
+        let stripe = null;
+        let elements = null;
+        let cardElement = null;
+        let paymentProcessing = false;
+        let stripeLoaded = false;
+
+        // Inicializar cuando la página se carga
+        document.addEventListener('DOMContentLoaded', async function() {
+            console.log('Iniciando configuración de Stripe...');
+            
+            try {
+                // Obtener clave pública de Stripe
+                const response = await fetch('api/stripe_checkout.php', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: 'action=get_public_key'
+                });
+                
+                const data = await response.json();
+                console.log('Respuesta API:', data);
+                
+                if (data.success) {
+                    // Inicializar Stripe con la clave pública
+                    stripe = Stripe(data.data.public_key);
+                    console.log('Stripe inicializado con clave:', data.data.public_key.substring(0, 20) + '...');
+                    
+                    // Crear Elements
+                    elements = stripe.elements({
+                        locale: 'es'
+                    });
+                    
+                    // Crear elemento de tarjeta
+                    cardElement = elements.create('card', {
+                        style: {
+                            base: {
+                                fontSize: '16px',
+                                color: '#424770',
+                                '::placeholder': {
+                                    color: '#aab7c4',
+                                },
+                                fontFamily: 'system-ui, -apple-system, sans-serif',
+                            },
+                            invalid: {
+                                color: '#dc3545',
+                                iconColor: '#dc3545'
+                            },
+                            complete: {
+                                color: '#28a745',
+                                iconColor: '#28a745'
+                            }
+                        },
+                        hidePostalCode: false
+                    });
+                    
+                    // Montar elemento en el DOM
+                    cardElement.mount('#card-element');
+                    console.log('Elemento de tarjeta montado');
+                    
+                    // Manejar errores en tiempo real
+                    cardElement.on('change', function(event) {
+                        const displayError = document.getElementById('card-errors');
+                        const displaySuccess = document.getElementById('card-success');
+                        
+                        if (event.error) {
+                            displayError.textContent = event.error.message;
+                            displaySuccess.style.display = 'none';
+                        } else {
+                            displayError.textContent = '';
+                            if (event.complete) {
+                                displaySuccess.textContent = '✓ Información de tarjeta válida';
+                                displaySuccess.style.display = 'block';
+                            } else {
+                                displaySuccess.style.display = 'none';
+                            }
+                        }
+                        updateStepStatus();
+                    });
+                    
+                    stripeLoaded = true;
+                    console.log('Stripe cargado exitosamente en modo:', data.data.environment);
+                } else {
+                    throw new Error(data.message);
+                }
+            } catch (error) {
+                console.error('Error inicializando Stripe:', error);
+                showError('Error inicializando sistema de pagos: ' + error.message);
+                
+                // Mostrar botón con error
+                const btnFinalizar = document.getElementById('btn-finalizar');
+                btnFinalizar.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Error de configuración';
+                btnFinalizar.disabled = true;
+            }
+            
+            // Configuración inicial
+            setupInitialState();
+        });
+
+        function setupInitialState() {
+            // Seleccionar dirección principal por defecto
+            <?php if (count($direcciones) > 0): ?>
+                const defaultAddress = document.getElementById('default-address');
+                if (defaultAddress) {
+                    defaultAddress.classList.add('selected');
+                }
+            <?php endif; ?>
+            
+            // Actualizar estado inicial
+            updateStepStatus();
+            
+            // Animaciones de entrada
+            const steps = document.querySelectorAll('.checkout-step');
+            steps.forEach((step, index) => {
+                step.style.opacity = '0';
+                step.style.transform = 'translateY(30px)';
+                setTimeout(() => {
+                    step.style.transition = 'all 0.6s ease';
+                    step.style.opacity = '1';
+                    step.style.transform = 'translateY(0)';
+                }, index * 100);
+            });
+            
+            // Event listeners para sugerencias de cupones
+            document.querySelectorAll('.coupon-suggestion').forEach(suggestion => {
+                suggestion.style.cursor = 'pointer';
+                suggestion.addEventListener('mouseenter', function() {
+                    this.style.textDecoration = 'underline';
+                });
+                suggestion.addEventListener('mouseleave', function() {
+                    this.style.textDecoration = 'none';
+                });
+            });
+            
+            // Enter key en campo de cupón
+            document.getElementById('coupon-code').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    applyCoupon();
+                }
+            });
+        }
 
         // Función para seleccionar dirección
         function selectAddress(addressId) {
@@ -715,23 +887,6 @@ $total = $subtotal - $descuento_aplicado + $costo_envio + $iva;
             selectedCard.querySelector('input[type="radio"]').checked = true;
             
             selectedAddressId = addressId;
-            updateStepStatus();
-        }
-
-        // Función para seleccionar método de pago
-        function selectPayment(paymentId) {
-            // Remover selección anterior
-            document.querySelectorAll('.payment-card').forEach(card => {
-                card.classList.remove('selected');
-                card.querySelector('input[type="radio"]').checked = false;
-            });
-            
-            // Seleccionar nuevo método
-            const selectedCard = document.querySelector(`[data-payment-id="${paymentId}"]`);
-            selectedCard.classList.add('selected');
-            selectedCard.querySelector('input[type="radio"]').checked = true;
-            
-            selectedPaymentId = paymentId;
             updateStepStatus();
         }
 
@@ -815,169 +970,156 @@ $total = $subtotal - $descuento_aplicado + $costo_envio + $iva;
                 step2.classList.add('completed');
             }
             
-            // Paso 3: Método de pago
+            // Paso 3: Stripe
             const step3 = document.getElementById('step-3-number');
-            if (selectedPaymentId) {
+            if (stripeLoaded && selectedAddressId) {
                 step3.classList.add('completed');
             }
             
             // Habilitar/deshabilitar botón de finalizar
             const btnFinalizar = document.getElementById('btn-finalizar');
-            if (selectedAddressId && selectedPaymentId) {
-                btnFinalizar.disabled = false;
-                btnFinalizar.innerHTML = '<i class="fas fa-lock"></i> Finalizar Compra Segura';
-            } else {
+            
+            if (!stripeLoaded) {
                 btnFinalizar.disabled = true;
-                btnFinalizar.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Completa todos los pasos';
+                btnFinalizar.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Cargando Stripe...';
+            } else if (!selectedAddressId) {
+                btnFinalizar.disabled = true;
+                btnFinalizar.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Selecciona una dirección';
+            } else if (paymentProcessing) {
+                btnFinalizar.disabled = true;
+                btnFinalizar.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Procesando pago...';
+            } else {
+                btnFinalizar.disabled = false;
+                btnFinalizar.innerHTML = '<i class="fas fa-lock"></i> Pagar con Stripe';
             }
         }
 
-        // Función para finalizar compra
-        async function finalizarCompra() {
-            if (!selectedAddressId || !selectedPaymentId) {
-                alert('Por favor completa todos los pasos antes de continuar');
+        // Función principal para procesar pago con Stripe
+        async function procesarPagoStripe() {
+            if (!stripe || !cardElement || !selectedAddressId || paymentProcessing) {
+                showError('Por favor completa todos los pasos antes de continuar');
                 return;
             }
             
-            // Confirmación final
+            // Confirmar intención de compra
             if (!confirm('¿Estás seguro de que quieres finalizar esta compra?')) {
                 return;
             }
             
-            const btnFinalizar = document.getElementById('btn-finalizar');
-            const originalText = btnFinalizar.innerHTML;
+            paymentProcessing = true;
+            updateStepStatus();
             
             try {
-                // Mostrar loading
-                btnFinalizar.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Procesando...';
-                btnFinalizar.disabled = true;
+                console.log('Iniciando proceso de pago...');
                 
-                // Preparar datos del pedido
-                const orderData = {
-                    action: 'create_order',
-                    address_id: selectedAddressId,
-                    payment_id: selectedPaymentId,
-                    coupon_code: appliedCoupon ? appliedCoupon.codigo : null,
-                    order_notes: document.getElementById('order-notes').value,
-                    totals: orderTotals
-                };
-                
-                const formData = new FormData();
-                Object.keys(orderData).forEach(key => {
-                    if (key === 'totals') {
-                        formData.append(key, JSON.stringify(orderData[key]));
-                    } else {
-                        formData.append(key, orderData[key]);
-                    }
-                });
-                
-                const response = await fetch('api/checkout.php', {
+                // Paso 1: Crear Payment Intent
+                const paymentIntentResponse = await fetch('api/stripe_checkout.php', {
                     method: 'POST',
-                    body: formData
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: new URLSearchParams({
+                        action: 'create_payment_intent',
+                        amount: orderTotals.total,
+                        currency: 'mxn',
+                        order_data: JSON.stringify({
+                            items: <?= json_encode($carrito_items) ?>,
+                            totals: orderTotals
+                        })
+                    })
                 });
                 
-                const data = await response.json();
+                const paymentIntentData = await paymentIntentResponse.json();
+                console.log('Payment Intent creado:', paymentIntentData);
                 
-                if (data.success) {
-                    // Redirigir a página de confirmación
-                    window.location.href = `checkout_confirmacion.php?order_id=${data.data.order_id}&numero_pedido=${data.data.numero_pedido}`;
+                if (!paymentIntentData.success) {
+                    throw new Error(paymentIntentData.message);
+                }
+                
+                // Paso 2: Confirmar pago con Stripe
+                console.log('Confirmando pago con Stripe...');
+                const {error, paymentIntent} = await stripe.confirmCardPayment(
+                    paymentIntentData.data.client_secret,
+                    {
+                        payment_method: {
+                            card: cardElement,
+                            billing_details: {
+                                name: 'Cliente de Novedades Ashley'
+                            }
+                        }
+                    }
+                );
+                
+                if (error) {
+                    console.error('Error en confirmación de pago:', error);
+                    throw new Error(error.message);
+                }
+                
+                console.log('Pago confirmado:', paymentIntent);
+                
+                if (paymentIntent.status === 'succeeded') {
+                    // Paso 3: Confirmar el pedido en nuestro sistema
+                    console.log('Confirmando pedido en sistema...');
+                    const confirmResponse = await fetch('api/stripe_checkout.php', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                        },
+                        body: new URLSearchParams({
+                            action: 'confirm_payment',
+                            payment_intent_id: paymentIntent.id,
+                            address_id: selectedAddressId,
+                            order_notes: document.getElementById('order-notes').value,
+                            coupon_code: appliedCoupon ? appliedCoupon.codigo : '',
+                            totals: JSON.stringify(orderTotals)
+                        })
+                    });
+                    
+                    const confirmData = await confirmResponse.json();
+                    console.log('Pedido confirmado:', confirmData);
+                    
+                    if (confirmData.success) {
+                        // Redirigir a página de confirmación
+                        console.log('Redirigiendo a confirmación...');
+                        window.location.href = `checkout_confirmacion.php?order_id=${confirmData.data.order_id}&numero_pedido=${confirmData.data.numero_pedido}&stripe_payment_intent=${paymentIntent.id}`;
+                    } else {
+                        throw new Error(confirmData.message);
+                    }
                 } else {
-                    throw new Error(data.message || 'Error al procesar el pedido');
+                    throw new Error('El pago no pudo ser procesado completamente');
                 }
                 
             } catch (error) {
-                console.error('Error:', error);
-                alert('Error al procesar el pedido: ' + error.message);
-                
-                // Restaurar botón
-                btnFinalizar.innerHTML = originalText;
-                btnFinalizar.disabled = false;
+                console.error('Error procesando pago:', error);
+                showError('Error procesando el pago: ' + error.message);
+                paymentProcessing = false;
+                updateStepStatus();
             }
         }
 
-        // Inicialización
-        document.addEventListener('DOMContentLoaded', function() {
-            // Seleccionar dirección principal por defecto
-            <?php if (count($direcciones) > 0): ?>
-                const defaultAddress = document.getElementById('default-address');
-                if (defaultAddress) {
-                    defaultAddress.classList.add('selected');
-                }
-            <?php endif; ?>
-            
-            // Seleccionar método de pago principal por defecto
-            <?php if (count($metodos_pago) > 0): ?>
-                const defaultPayment = document.getElementById('default-payment');
-                if (defaultPayment) {
-                    defaultPayment.classList.add('selected');
-                }
-            <?php endif; ?>
-            
-            // Actualizar estado inicial
-            updateStepStatus();
-            
-            // Animaciones de entrada
-            const steps = document.querySelectorAll('.checkout-step');
-            steps.forEach((step, index) => {
-                step.style.opacity = '0';
-                step.style.transform = 'translateY(30px)';
-                setTimeout(() => {
-                    step.style.transition = 'all 0.6s ease';
-                    step.style.opacity = '1';
-                    step.style.transform = 'translateY(0)';
-                }, index * 100);
-            });
-            
-            // Event listeners para sugerencias de cupones
-            document.querySelectorAll('.coupon-suggestion').forEach(suggestion => {
-                suggestion.style.cursor = 'pointer';
-                suggestion.addEventListener('mouseenter', function() {
-                    this.style.textDecoration = 'underline';
-                });
-                suggestion.addEventListener('mouseleave', function() {
-                    this.style.textDecoration = 'none';
-                });
-            });
-            
-            // Enter key en campo de cupón
-            document.getElementById('coupon-code').addEventListener('keypress', function(e) {
-                if (e.key === 'Enter') {
-                    applyCoupon();
-                }
-            });
-        });
+        // Función para mostrar errores
+        function showError(message) {
+            const errorDiv = document.getElementById('card-errors');
+            if (errorDiv) {
+                errorDiv.textContent = message;
+            } else {
+                alert(message);
+            }
+        }
 
         // Función para manejar errores de red
         window.addEventListener('offline', function() {
-            alert('Se perdió la conexión a internet. Por favor verifica tu conexión antes de finalizar la compra.');
+            alert('Se perdió la conexión a internet. Por favor verifica tu conexión antes de procesar el pago.');
         });
 
         // Prevenir salida accidental de la página
         window.addEventListener('beforeunload', function(e) {
-            if (selectedAddressId && selectedPaymentId) {
+            if (paymentProcessing) {
                 e.preventDefault();
                 e.returnValue = '';
-                return 'Tienes una compra en proceso. ¿Estás seguro de que quieres salir?';
+                return 'Hay un pago en proceso. ¿Estás seguro de que quieres salir?';
             }
         });
     </script>
 </body>
-</html>Agregar Dirección Rápida</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <p class="text-muted">Para una experiencia completa, ve a tu perfil para gestionar direcciones.</p>
-                    <a href="perfil.php" class="btn btn-primary w-100">
-                        <i class="fas fa-user"></i> Ir a Mi Perfil
-                    </a>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Modal para agregar método de pago (simplificado) -->
-    <div class="modal fade" id="addPaymentModal" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">
+</html>
