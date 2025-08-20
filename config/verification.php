@@ -1,5 +1,5 @@
 <?php
-// config/verification.php - Sistema de Verificación COMPLETO - ACTUALIZADO CON PASSWORD RESET
+// config/verification.php - Sistema de Verificación COMPLETO - CORREGIDO
 class VerificationService {
     private $conn;
     
@@ -7,18 +7,18 @@ class VerificationService {
     private $smtp_config = [
         'host' => 'smtp.gmail.com',
         'port' => 587,
-        'username' => 'jc.reyesm8@gmail.com',        // ✅ Tu email
-        'password' => 'mmcz tpee zcqf pefg',          // ✅ Tu App Password
+        'username' => 'jc.reyesm8@gmail.com',        // Tu email
+        'password' => 'mmcz tpee zcqf pefg',          // Tu App Password
         'encryption' => 'tls',
-        'from_email' => 'jc.reyesm8@gmail.com',       // ✅ Tu email
-        'from_name' => 'Novedades Ashley'              // ✅ Nombre que verán
+        'from_email' => 'jc.reyesm8@gmail.com',       // Tu email
+        'from_name' => 'Novedades Ashley'              // Nombre que verán
     ];
     
     // Configuración de Twilio (SMS/WhatsApp) - CAMBIAR POR TUS DATOS
     private $twilio_config = [
-        'account_sid' => 'TU_TWILIO_ACCOUNT_SID',  // ⚠️ CAMBIAR
-        'auth_token' => 'TU_TWILIO_AUTH_TOKEN',    // ⚠️ CAMBIAR
-        'phone_number' => '+1234567890',           // ⚠️ CAMBIAR - Tu número de Twilio
+        'account_sid' => 'TU_TWILIO_ACCOUNT_SID',  // CAMBIAR
+        'auth_token' => 'TU_TWILIO_AUTH_TOKEN',    // CAMBIAR
+        'phone_number' => '+1234567890',           // CAMBIAR - Tu número de Twilio
         'whatsapp_number' => 'whatsapp:+14155238886' // Número sandbox WhatsApp
     ];
     
@@ -57,7 +57,64 @@ class VerificationService {
     }
     
     /**
-     * ✨ NUEVO: Enviar código de recuperación de contraseña por email
+     * NUEVO: Enviar email de verificación para registro
+     */
+    public function sendRegistrationVerificationEmail($email, $name, $verification_token) {
+        try {
+            $subject = 'Verifica tu cuenta - Novedades Ashley';
+            $message = $this->getRegistrationVerificationTemplate($verification_token, $name);
+            
+            return $this->sendEmailWithPHPMailer($email, $subject, $message);
+            
+        } catch (Exception $e) {
+            error_log("Error enviando verificación de registro: " . $e->getMessage());
+            return false;
+        }
+    }
+    
+    /**
+     * NUEVO: Enviar código de 6 dígitos para registro pendiente
+     */
+    public function sendPendingRegistrationCode($pending_id, $email, $nombre) {
+        try {
+            // Generar código de 6 dígitos
+            $codigo = str_pad(rand(0, 999999), 6, '0', STR_PAD_LEFT);
+            
+            // Actualizar el registro pendiente con el código
+            $stmt = $this->conn->prepare("
+                UPDATE pending_registrations 
+                SET verification_token = ? 
+                WHERE id = ?
+            ");
+            $stmt->execute([$codigo, $pending_id]);
+            
+            // Enviar email con el código
+            return $this->sendRegistrationVerificationCode($email, $nombre, $codigo);
+            
+        } catch (Exception $e) {
+            error_log("Error enviando código de registro pendiente: " . $e->getMessage());
+            return false;
+        }
+    }
+    
+    /**
+     * NUEVO: Enviar email con código de 6 dígitos para registro
+     */
+    public function sendRegistrationVerificationCode($email, $nombre, $codigo) {
+        try {
+            $subject = 'Código de verificación - Novedades Ashley';
+            $message = $this->getRegistrationCodeTemplate($codigo, $nombre);
+            
+            return $this->sendEmailWithPHPMailer($email, $subject, $message);
+            
+        } catch (Exception $e) {
+            error_log("Error enviando código de verificación de registro: " . $e->getMessage());
+            return false;
+        }
+    }
+    
+    /**
+     * Enviar código de recuperación de contraseña por email
      */
     public function sendPasswordResetEmail($user_id, $email, $user_name = '') {
         try {
@@ -87,7 +144,7 @@ class VerificationService {
     }
     
     /**
-     * ✨ NUEVO: Enviar email de confirmación de reset exitoso
+     * Enviar email de confirmación de reset exitoso
      */
     public function sendPasswordResetConfirmation($email, $user_name = '') {
         try {
@@ -132,7 +189,7 @@ class VerificationService {
     }
     
     /**
-     * ✨ NUEVO: Enviar código de recuperación de contraseña por SMS
+     * Enviar código de recuperación de contraseña por SMS
      */
     public function sendPasswordResetSMS($user_id, $phone) {
         try {
@@ -198,7 +255,7 @@ class VerificationService {
     }
     
     /**
-     * ✨ NUEVO: Enviar código de recuperación de contraseña por WhatsApp
+     * Enviar código de recuperación de contraseña por WhatsApp
      */
     public function sendPasswordResetWhatsApp($user_id, $phone) {
         try {
@@ -282,6 +339,128 @@ class VerificationService {
     }
     
     /**
+     * Validar token de verificación de registro
+     */
+    public function validateRegistrationToken($token) {
+        try {
+            $stmt = $this->conn->prepare("
+                SELECT * FROM pending_registrations 
+                WHERE verification_token = ? AND expires_at > NOW()
+            ");
+            $stmt->execute([$token]);
+            return $stmt->fetch();
+        } catch (Exception $e) {
+            error_log("Error validando token: " . $e->getMessage());
+            return false;
+        }
+    }
+    
+    /**
+     * Limpiar registros expirados
+     */
+    public function cleanupExpiredRegistrations() {
+        try {
+            $stmt = $this->conn->prepare("
+                DELETE FROM pending_registrations 
+                WHERE expires_at <= NOW() OR created_at < DATE_SUB(NOW(), INTERVAL 24 HOUR)
+            ");
+            $result = $stmt->execute();
+            $deleted = $stmt->rowCount();
+            
+            error_log("Limpieza de registros expirados: {$deleted} registros eliminados");
+            return $deleted;
+            
+        } catch (Exception $e) {
+            error_log("Error limpiando registros expirados: " . $e->getMessage());
+            return false;
+        }
+    }
+    
+    /**
+     * Obtener estadísticas de registros pendientes
+     */
+    public function getPendingRegistrationStats() {
+        try {
+            $stats = [];
+            
+            // Total pendientes
+            $stmt = $this->conn->prepare("SELECT COUNT(*) as total FROM pending_registrations WHERE expires_at > NOW()");
+            $stmt->execute();
+            $stats['total_pending'] = $stmt->fetchColumn();
+            
+            // Pendientes por día
+            $stmt = $this->conn->prepare("
+                SELECT DATE(created_at) as fecha, COUNT(*) as cantidad 
+                FROM pending_registrations 
+                WHERE expires_at > NOW() AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+                GROUP BY DATE(created_at) 
+                ORDER BY fecha DESC
+            ");
+            $stmt->execute();
+            $stats['by_day'] = $stmt->fetchAll();
+            
+            // Expirados hoy
+            $stmt = $this->conn->prepare("
+                SELECT COUNT(*) as total 
+                FROM pending_registrations 
+                WHERE DATE(expires_at) = CURDATE() AND expires_at <= NOW()
+            ");
+            $stmt->execute();
+            $stats['expired_today'] = $stmt->fetchColumn();
+            
+            return $stats;
+            
+        } catch (Exception $e) {
+            error_log("Error obteniendo estadísticas: " . $e->getMessage());
+            return [];
+        }
+    }
+    
+    /**
+     * Reenviar código (genera uno nuevo)
+     */
+    public function resendVerification($user_id, $type) {
+        try {
+            // Obtener información del usuario
+            $stmt = $this->conn->prepare("SELECT email, telefono FROM clientes WHERE id = ?");
+            $stmt->execute([$user_id]);
+            $user = $stmt->fetch();
+            
+            if (!$user) {
+                return false;
+            }
+            
+            // Reenviar según el tipo
+            switch ($type) {
+                case 'email_verification':
+                    return $this->sendEmailVerification($user_id, $user['email']);
+                    
+                case 'phone_verification':
+                    return $this->sendSMSVerification($user_id, $user['telefono']);
+                    
+                case 'whatsapp_verification':
+                    return $this->sendWhatsAppVerification($user_id, $user['telefono']);
+                    
+                case 'password_reset':
+                    // Para password reset, necesitamos saber si es email, SMS o WhatsApp
+                    // Por defecto intentamos email
+                    return $this->sendPasswordResetEmail($user_id, $user['email']);
+                    
+                default:
+                    return false;
+            }
+            
+        } catch (Exception $e) {
+            error_log("Error reenviando código: " . $e->getMessage());
+            return false;
+        }
+    }
+    
+    // ================================
+    // MÉTODOS PRIVADOS PARA EMAILS
+    // ================================
+    
+    /**
      * Enviar email usando Gmail SMTP
      */
     private function sendEmail($to_email, $codigo, $type, $user_name = '') {
@@ -290,22 +469,22 @@ class VerificationService {
         
         switch ($type) {
             case 'email_verification':
-                $subject = '🔐 Verificar tu correo - Novedades Ashley';
+                $subject = 'Verificar tu correo - Novedades Ashley';
                 $message = $this->getEmailVerificationTemplate($codigo);
                 break;
                 
             case 'email_change':
-                $subject = '🔧 Confirmar cambio de correo - Novedades Ashley';
+                $subject = 'Confirmar cambio de correo - Novedades Ashley';
                 $message = $this->getEmailChangeTemplate($codigo);
                 break;
                 
             case 'password_reset':
-                $subject = '🔐 Recuperar tu contraseña - Novedades Ashley';
+                $subject = 'Recuperar tu contraseña - Novedades Ashley';
                 $message = $this->getPasswordResetTemplate($codigo, $user_name);
                 break;
                 
             case 'password_reset_confirmation':
-                $subject = '✅ Contraseña actualizada - Novedades Ashley';
+                $subject = 'Contraseña actualizada - Novedades Ashley';
                 $message = $this->getPasswordResetConfirmationTemplate($user_name);
                 break;
         }
@@ -319,7 +498,7 @@ class VerificationService {
      */
     private function sendEmailWithPHPMailer($to_email, $subject, $message) {
         try {
-            // ✅ CORRECCIÓN: Usar autoload de Composer
+            // CORRECCIÓN: Usar autoload de Composer
             require_once __DIR__ . '/../vendor/autoload.php';
             
             $mail = new PHPMailer\PHPMailer\PHPMailer(true);
@@ -352,6 +531,10 @@ class VerificationService {
         }
     }
     
+    // ================================
+    // MÉTODOS PRIVADOS PARA SMS/WHATSAPP
+    // ================================
+    
     /**
      * Enviar SMS usando Twilio
      */
@@ -361,10 +544,10 @@ class VerificationService {
     }
     
     /**
-     * ✨ NUEVO: Enviar SMS de recuperación de contraseña
+     * Enviar SMS de recuperación de contraseña
      */
     private function sendPasswordResetSMSMessage($phone, $codigo) {
-        $message = "🔐 Tu código de recuperación de contraseña para Novedades Ashley es: {$codigo}. Válido por 15 minutos. Si no fuiste tú, ignora este mensaje.";
+        $message = "Tu código de recuperación de contraseña para Novedades Ashley es: {$codigo}. Válido por 15 minutos. Si no fuiste tú, ignora este mensaje.";
         return $this->sendTwilioSMS($phone, $message);
     }
     
@@ -372,15 +555,15 @@ class VerificationService {
      * Enviar WhatsApp usando Twilio
      */
     private function sendWhatsApp($phone, $codigo) {
-        $message = "🔐 *Novedades Ashley*\n\nTu código de verificación es: *{$codigo}*\n\nVálido por 15 minutos.\n\n¡Gracias por confiar en nosotros! 🛍️";
+        $message = "*Novedades Ashley*\n\nTu código de verificación es: *{$codigo}*\n\nVálido por 15 minutos.\n\n¡Gracias por confiar en nosotros!";
         return $this->sendTwilioWhatsApp($phone, $message);
     }
     
     /**
-     * ✨ NUEVO: Enviar WhatsApp de recuperación de contraseña
+     * Enviar WhatsApp de recuperación de contraseña
      */
     private function sendPasswordResetWhatsAppMessage($phone, $codigo) {
-        $message = "🔐 *Novedades Ashley - Recuperar Contraseña*\n\nTu código de recuperación es: *{$codigo}*\n\nVálido por 15 minutos.\n\n⚠️ Si no solicitaste esto, ignora este mensaje.\n\nTu cuenta permanece segura. 🛡️";
+        $message = "*Novedades Ashley - Recuperar Contraseña*\n\nTu código de recuperación es: *{$codigo}*\n\nVálido por 15 minutos.\n\nSi no solicitaste esto, ignora este mensaje.\n\nTu cuenta permanece segura.";
         return $this->sendTwilioWhatsApp($phone, $message);
     }
     
@@ -479,6 +662,166 @@ class VerificationService {
         return '+52' . $phone; // Por defecto México
     }
     
+    // ================================
+    // TEMPLATES DE EMAILS
+    // ================================
+    
+    /**
+     * Template de email para verificación de registro
+     */
+    private function getRegistrationVerificationTemplate($verification_token, $user_name = '') {
+        $nombre_saludo = !empty($user_name) ? $user_name : 'Usuario';
+        $verification_link = "http://localhost/tienda_multicategoria/verify_registration.php?token=" . $verification_token;
+        
+        return "
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset='UTF-8'>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f4f4f4; }
+                .container { background: white; padding: 30px; border-radius: 15px; max-width: 600px; margin: 0 auto; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+                .header { text-align: center; margin-bottom: 30px; }
+                .logo { color: #667eea; font-size: 24px; font-weight: bold; margin-bottom: 10px; }
+                .btn-verify { background: linear-gradient(45deg, #667eea, #764ba2); color: white; padding: 15px 30px; text-decoration: none; border-radius: 10px; font-weight: bold; display: inline-block; margin: 20px 0; }
+                .btn-verify:hover { color: white; text-decoration: none; }
+                .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; border-top: 1px solid #eee; padding-top: 20px; }
+                .warning { background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px; padding: 15px; margin: 20px 0; color: #856404; }
+                .token-display { background: #f8f9fa; border: 2px dashed #dee2e6; border-radius: 8px; padding: 15px; margin: 20px 0; text-align: center; font-family: monospace; font-size: 14px; word-break: break-all; }
+            </style>
+        </head>
+        <body>
+            <div class='container'>
+                <div class='header'>
+                    <div class='logo'>Novedades Ashley</div>
+                    <h1 style='color: #333; margin: 0;'>Bienvenido/a {$nombre_saludo}</h1>
+                    <p style='color: #666; margin: 10px 0 0 0;'>Solo falta verificar tu cuenta</p>
+                </div>
+                
+                <p>Gracias por registrarte en Novedades Ashley. Para completar tu registro y activar tu cuenta, necesitas verificar tu dirección de email.</p>
+                
+                <div style='text-align: center; margin: 30px 0;'>
+                    <a href='{$verification_link}' class='btn-verify'>
+                        Verificar mi Cuenta
+                    </a>
+                </div>
+                
+                <div class='warning'>
+                    <strong>Este enlace expira en 24 horas.</strong><br>
+                    Si no verificas tu cuenta en este tiempo, tendrás que registrarte nuevamente.
+                </div>
+                
+                <p><strong>¿No puedes hacer clic en el botón?</strong><br>
+                Copia y pega este enlace en tu navegador:</p>
+                
+                <div class='token-display'>
+                    {$verification_link}
+                </div>
+                
+                <p>Una vez verificada tu cuenta, podrás:</p>
+                <ul>
+                    <li>Iniciar sesión en tu cuenta</li>
+                    <li>Realizar compras</li>
+                    <li>Rastrear tus pedidos</li>
+                    <li>Recibir notificaciones importantes</li>
+                    <li>Guardar métodos de pago</li>
+                    <li>Gestionar direcciones de envío</li>
+                </ul>
+                
+                <div class='warning'>
+                    <strong>¿No solicitaste esta cuenta?</strong><br>
+                    Si no te registraste en Novedades Ashley, puedes ignorar este email. No se creará ninguna cuenta sin la verificación.
+                </div>
+                
+                <div class='footer'>
+                    <p><strong>Equipo de Novedades Ashley</strong></p>
+                    <p>\"Descubre lo nuevo, siente la diferencia\"</p>
+                    <hr style='border: none; border-top: 1px solid #eee; margin: 15px 0;'>
+                    <p><small>Este es un email automático, por favor no respondas.<br>
+                    Si tienes problemas, contacta nuestro soporte.</small></p>
+                </div>
+            </div>
+        </body>
+        </html>
+        ";
+    }
+    
+    /**
+     * NUEVO: Template para código de verificación de registro
+     */
+    private function getRegistrationCodeTemplate($codigo, $nombre = '') {
+        $nombre_saludo = !empty($nombre) ? $nombre : 'Usuario';
+        
+        return "
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset='UTF-8'>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f4f4f4; }
+                .container { background: white; padding: 30px; border-radius: 15px; max-width: 600px; margin: 0 auto; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+                .header { text-align: center; margin-bottom: 30px; background: linear-gradient(45deg, #667eea, #764ba2); color: white; padding: 20px; border-radius: 10px; }
+                .code { background: linear-gradient(45deg, #28a745, #20c997); color: white; padding: 25px; border-radius: 10px; font-size: 36px; font-weight: bold; text-align: center; margin: 30px 0; letter-spacing: 8px; font-family: monospace; }
+                .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; border-top: 1px solid #eee; padding-top: 20px; }
+                .warning { background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px; padding: 15px; margin: 20px 0; color: #856404; }
+                .steps { background: #e3f2fd; border-radius: 8px; padding: 20px; margin: 20px 0; }
+            </style>
+        </head>
+        <body>
+            <div class='container'>
+                <div class='header'>
+                    <div style='font-size: 24px; font-weight: bold; margin-bottom: 10px;'>Novedades Ashley</div>
+                    <h1 style='margin: 0;'>Código de Verificación</h1>
+                    <p style='margin: 10px 0 0 0;'>¡Hola {$nombre_saludo}! Solo falta un paso</p>
+                </div>
+                
+                <p>Gracias por registrarte en Novedades Ashley. Para completar tu registro, ingresa el siguiente código de 6 dígitos:</p>
+                
+                <div class='code'>{$codigo}</div>
+                
+                <div class='warning'>
+                    <strong>Este código expira en 24 horas.</strong><br>
+                    Si no verificas tu cuenta en este tiempo, tendrás que registrarte nuevamente.
+                </div>
+                
+                <div class='steps'>
+                    <h3 style='color: #1976d2; margin-top: 0;'>Pasos para verificar:</h3>
+                    <ol style='line-height: 1.6;'>
+                        <li>Ve a la página de verificación</li>
+                        <li>Ingresa el código: <strong>{$codigo}</strong></li>
+                        <li>¡Listo! Tu cuenta será activada automáticamente</li>
+                    </ol>
+                </div>
+                
+                <p>Una vez verificada tu cuenta, podrás:</p>
+                <ul>
+                    <li>Iniciar sesión con tu email y contraseña</li>
+                    <li>Realizar compras</li>
+                    <li>Rastrear tus pedidos</li>
+                    <li>Recibir notificaciones importantes</li>
+                    <li>Guardar métodos de pago</li>
+                    <li>Gestionar direcciones de envío</li>
+                </ul>
+                
+                <div class='warning'>
+                    <strong>¿No solicitaste esta cuenta?</strong><br>
+                    Si no te registraste en Novedades Ashley, puedes ignorar este email. No se creará ninguna cuenta sin la verificación.
+                </div>
+                
+                <div class='footer'>
+                    <p><strong>Equipo de Novedades Ashley</strong></p>
+                    <p>\"Descubre lo nuevo, siente la diferencia\"</p>
+                    <hr style='border: none; border-top: 1px solid #eee; margin: 15px 0;'>
+                    <p><small>Este es un email automático, por favor no respondas.<br>
+                    Si tienes problemas, contacta nuestro soporte.</small></p>
+                    <p><small>Código generado: " . date('d/m/Y H:i:s') . "</small></p>
+                </div>
+            </div>
+        </body>
+        </html>
+        ";
+    }
+    
     /**
      * Template de email para verificación
      */
@@ -501,28 +844,28 @@ class VerificationService {
         <body>
             <div class='container'>
                 <div class='header'>
-                    <div class='logo'>👑 Novedades Ashley</div>
+                    <div class='logo'>Novedades Ashley</div>
                     <h1 style='color: #333; margin: 0;'>Verificar tu Email</h1>
                     <p style='color: #666; margin: 10px 0 0 0;'>Confirma tu dirección de correo electrónico</p>
                 </div>
                 
-                <p>¡Hola! Gracias por registrarte en Novedades Ashley.</p>
+                <p>Hola. Gracias por registrarte en Novedades Ashley.</p>
                 
                 <p>Para completar tu registro y activar tu cuenta, por favor ingresa el siguiente código de verificación:</p>
                 
                 <div class='code'>{$codigo}</div>
                 
                 <div class='warning'>
-                    <strong>⏰ Este código expira en 15 minutos.</strong><br>
+                    <strong>Este código expira en 15 minutos.</strong><br>
                     Si no fuiste tú quien solicitó este código, puedes ignorar este email.
                 </div>
                 
                 <p>Una vez verificado, podrás:</p>
                 <ul>
-                    <li>✅ Realizar compras</li>
-                    <li>📦 Rastrear tus pedidos</li>
-                    <li>🔔 Recibir notificaciones importantes</li>
-                    <li>💳 Guardar métodos de pago</li>
+                    <li>Realizar compras</li>
+                    <li>Rastrear tus pedidos</li>
+                    <li>Recibir notificaciones importantes</li>
+                    <li>Guardar métodos de pago</li>
                 </ul>
                 
                 <div class='footer'>
@@ -560,7 +903,7 @@ class VerificationService {
         <body>
             <div class='container'>
                 <div class='header'>
-                    <div class='logo'>👑 Novedades Ashley</div>
+                    <div class='logo'>Novedades Ashley</div>
                     <h1 style='color: #333; margin: 0;'>Confirmar Cambio de Email</h1>
                     <p style='color: #666; margin: 10px 0 0 0;'>Verificación de nueva dirección</p>
                 </div>
@@ -572,7 +915,7 @@ class VerificationService {
                 <div class='code'>{$codigo}</div>
                 
                 <div class='danger'>
-                    <strong>🚨 ¿No solicitaste este cambio?</strong><br>
+                    <strong>¿No solicitaste este cambio?</strong><br>
                     Si no fuiste tú, contacta inmediatamente a nuestro soporte. Tu cuenta podría estar comprometida.
                 </div>
                 
@@ -589,7 +932,7 @@ class VerificationService {
     }
     
     /**
-     * ✨ NUEVO: Template de email para recuperación de contraseña
+     * Template de email para recuperación de contraseña
      */
     private function getPasswordResetTemplate($codigo, $user_name = '') {
         $nombre_saludo = !empty($user_name) ? $user_name : 'Usuario';
@@ -613,7 +956,7 @@ class VerificationService {
         <body>
             <div class='container'>
                 <div class='header'>
-                    <div class='logo'>🔐 Novedades Ashley</div>
+                    <div class='logo'>Novedades Ashley</div>
                     <h1 style='color: #333; margin: 0;'>Recuperar Contraseña</h1>
                     <p style='color: #666; margin: 10px 0 0 0;'>Código de recuperación solicitado</p>
                 </div>
@@ -627,23 +970,15 @@ class VerificationService {
                 <div class='code'>{$codigo}</div>
                 
                 <div class='warning'>
-                    <strong>⏰ Este código expira en 15 minutos.</strong><br>
+                    <strong>Este código expira en 15 minutos.</strong><br>
                     Úsalo en la página de recuperación para establecer tu nueva contraseña.
                 </div>
                 
                 <div class='security'>
-                    <strong>🚨 ¿No solicitaste esto?</strong><br>
+                    <strong>¿No solicitaste esto?</strong><br>
                     Si no fuiste tú quien pidió restablecer la contraseña, ignora este email. 
                     Tu cuenta permanece segura y no se realizarán cambios.
                 </div>
-                
-                <p><strong>Instrucciones:</strong></p>
-                <ol>
-                    <li>Ve a la página de recuperación de contraseña</li>
-                    <li>Ingresa el código de 6 dígitos: <strong>{$codigo}</strong></li>
-                    <li>Establece tu nueva contraseña</li>
-                    <li>¡Listo! Ya puedes iniciar sesión</li>
-                </ol>
                 
                 <div class='footer'>
                     <p><strong>Equipo de Novedades Ashley</strong></p>
@@ -651,8 +986,6 @@ class VerificationService {
                     <hr style='border: none; border-top: 1px solid #eee; margin: 15px 0;'>
                     <p><small>Este es un email automático, por favor no respondas.<br>
                     Si tienes problemas, contacta nuestro soporte.</small></p>
-                    <p><small>IP de solicitud: " . ($_SERVER['REMOTE_ADDR'] ?? 'No disponible') . "<br>
-                    Fecha: " . date('d/m/Y H:i:s') . "</small></p>
                 </div>
             </div>
         </body>
@@ -661,7 +994,7 @@ class VerificationService {
     }
     
     /**
-     * ✨ NUEVO: Template de email de confirmación de reset exitoso
+     * Template de email de confirmación de reset exitoso
      */
     private function getPasswordResetConfirmationTemplate($user_name = '') {
         $nombre_saludo = !empty($user_name) ? $user_name : 'Usuario';
@@ -684,35 +1017,26 @@ class VerificationService {
         <body>
             <div class='container'>
                 <div class='header'>
-                    <div class='logo'>✅ Novedades Ashley</div>
+                    <div class='logo'>Novedades Ashley</div>
                     <h1 style='color: #333; margin: 0;'>Contraseña Actualizada</h1>
                     <p style='color: #666; margin: 10px 0 0 0;'>Tu contraseña ha sido restablecida exitosamente</p>
                 </div>
                 
                 <div class='success'>
-                    <h2 style='margin: 0 0 10px 0;'>🎉 ¡Listo!</h2>
+                    <h2 style='margin: 0 0 10px 0;'>Listo</h2>
                     <p style='margin: 0;'>Tu contraseña ha sido actualizada correctamente</p>
                 </div>
                 
                 <p>Hola <strong>{$nombre_saludo}</strong>,</p>
                 
-                <p>Te confirmamos que la contraseña de tu cuenta en Novedades Ashley ha sido restablecida exitosamente el día " . date('d/m/Y') . " a las " . date('H:i:s') . ".</p>
+                <p>Te confirmamos que la contraseña de tu cuenta en Novedades Ashley ha sido restablecida exitosamente.</p>
                 
                 <div class='info'>
-                    <strong>🔐 ¿Qué hacer ahora?</strong><br>
+                    <strong>¿Qué hacer ahora?</strong><br>
                     • Ya puedes iniciar sesión con tu nueva contraseña<br>
                     • Guarda tu contraseña en un lugar seguro<br>
-                    • No compartas tu contraseña con nadie<br>
-                    • Considera usar un administrador de contraseñas
+                    • No compartas tu contraseña con nadie
                 </div>
-                
-                <p><strong>Consejos de seguridad:</strong></p>
-                <ul>
-                    <li>🔒 Usa una contraseña única para cada sitio web</li>
-                    <li>📱 Mantén tu información de contacto actualizada</li>
-                    <li>🚨 Reporta cualquier actividad sospechosa</li>
-                    <li>🔄 Cambia tu contraseña periódicamente</li>
-                </ul>
                 
                 <p>Si no realizaste este cambio, contacta inmediatamente a nuestro equipo de soporte.</p>
                 
@@ -722,57 +1046,15 @@ class VerificationService {
                     <hr style='border: none; border-top: 1px solid #eee; margin: 15px 0;'>
                     <p><small>Este es un email automático, por favor no respondas.<br>
                     Si tienes problemas, contacta nuestro soporte.</small></p>
-                    <p><small>IP de cambio: " . ($_SERVER['REMOTE_ADDR'] ?? 'No disponible') . "<br>
-                    Fecha: " . date('d/m/Y H:i:s') . "</small></p>
                 </div>
             </div>
         </body>
         </html>
         ";
     }
-    
-    /**
-     * Reenviar código (genera uno nuevo)
-     */
-    public function resendVerification($user_id, $type) {
-        try {
-            // Obtener información del usuario
-            $stmt = $this->conn->prepare("SELECT email, telefono FROM clientes WHERE id = ?");
-            $stmt->execute([$user_id]);
-            $user = $stmt->fetch();
-            
-            if (!$user) {
-                return false;
-            }
-            
-            // Reenviar según el tipo
-            switch ($type) {
-                case 'email_verification':
-                    return $this->sendEmailVerification($user_id, $user['email']);
-                    
-                case 'phone_verification':
-                    return $this->sendSMSVerification($user_id, $user['telefono']);
-                    
-                case 'whatsapp_verification':
-                    return $this->sendWhatsAppVerification($user_id, $user['telefono']);
-                    
-                case 'password_reset':
-                    // Para password reset, necesitamos saber si es email, SMS o WhatsApp
-                    // Por defecto intentamos email
-                    return $this->sendPasswordResetEmail($user_id, $user['email']);
-                    
-                default:
-                    return false;
-            }
-            
-        } catch (Exception $e) {
-            error_log("Error reenviando código: " . $e->getMessage());
-            return false;
-        }
-    }
 }
 
-// Función auxiliar para enmascarar email
+// Funciones auxiliares para enmascarar información
 function maskEmail($email) {
     if (empty($email)) return '';
     
@@ -789,7 +1071,6 @@ function maskEmail($email) {
     return substr($local, 0, 2) . str_repeat('*', strlen($local) - 2) . $domain;
 }
 
-// Función auxiliar para enmascarar teléfono
 function maskPhone($phone) {
     if (empty($phone)) return '';
     

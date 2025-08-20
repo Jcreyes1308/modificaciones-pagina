@@ -1,5 +1,5 @@
 <?php
-// registro.php - Registro simplificado con verificación automática
+// registro.php - CORREGIDO - Sistema con código de 6 dígitos ÚNICAMENTE
 session_start();
 
 // Si ya está logueado, redirigir al inicio
@@ -9,6 +9,8 @@ if (isset($_SESSION['usuario_id'])) {
 }
 
 require_once 'config/database.php';
+require_once 'config/verification.php';
+
 $database = new Database();
 $conn = $database->getConnection();
 
@@ -22,7 +24,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $password = $_POST['password'] ?? '';
     $confirm_password = $_POST['confirm_password'] ?? '';
     
-    // Validaciones simplificadas
+    // Validaciones
     if (empty($nombre) || empty($email) || empty($password)) {
         $error = 'Nombre, email y contraseña son requeridos';
     } elseif (strlen($password) < 6) {
@@ -33,90 +35,81 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = 'Email no válido';
     } else {
         try {
-            // Verificar que el email no existe
+            // VERIFICAR QUE NO EXISTA EN CLIENTES (usuarios ya verificados)
             $stmt = $conn->prepare("SELECT id FROM clientes WHERE email = ?");
             $stmt->execute([$email]);
             if ($stmt->fetch()) {
-                $error = 'Este email ya está registrado';
+                $error = 'Este email ya está registrado y verificado';
             } else {
-                // Crear usuario SIN teléfono ni dirección
-                $password_hash = password_hash($password, PASSWORD_DEFAULT);
+                // VERIFICAR SI YA ESTÁ EN PENDING (eliminar registros expirados primero)
+                $stmt = $conn->prepare("DELETE FROM pending_registrations WHERE email = ? AND expires_at <= NOW()");
+                $stmt->execute([$email]);
                 
-                $stmt = $conn->prepare("
-                    INSERT INTO clientes (nombre, email, password, activo) 
-                    VALUES (?, ?, ?, 1)
-                ");
+                $stmt = $conn->prepare("SELECT id, attempts FROM pending_registrations WHERE email = ?");
+                $stmt->execute([$email]);
+                $existing_pending = $stmt->fetch();
                 
-                if ($stmt->execute([$nombre, $email, $password_hash])) {
-                    $nuevo_id = $conn->lastInsertId();
+                if ($existing_pending && $existing_pending['attempts'] >= 3) {
+                    $error = 'Demasiados intentos de registro. Espera 24 horas o contacta soporte.';
+                } else {
+                    // GENERAR CÓDIGO DE 6 DÍGITOS
+                    $codigo_verificacion = str_pad(rand(0, 999999), 6, '0', STR_PAD_LEFT);
+                    $expires_at = date('Y-m-d H:i:s', strtotime('+24 hours'));
+                    $password_hash = password_hash($password, PASSWORD_DEFAULT);
                     
-                    // Auto-login
-                    $_SESSION['usuario_id'] = $nuevo_id;
-                    $_SESSION['usuario_nombre'] = $nombre;
-                    $_SESSION['usuario_email'] = $email;
+                    $ip_address = $_SERVER['REMOTE_ADDR'] ?? '';
+                    $user_agent = $_SERVER['HTTP_USER_AGENT'] ?? '';
                     
-                    // Migrar carrito si existe
-                    if (isset($_SESSION['carrito']) && !empty($_SESSION['carrito'])) {
-                        foreach ($_SESSION['carrito'] as $item) {
-                            try {
-                                if (isset($item['id_producto'])) {
-                                    $stmt = $conn->prepare("INSERT INTO carrito_compras (id_cliente, id_producto, cantidad) VALUES (?, ?, ?)");
-                                    $stmt->execute([$nuevo_id, $item['id_producto'], $item['cantidad']]);
-                                }
-                            } catch (Exception $e) {
-                                error_log("Error migrando carrito: " . $e->getMessage());
-                            }
-                        }
-                        unset($_SESSION['carrito']);
+                    // GUARDAR EN PENDING_REGISTRATIONS con código
+                    if ($existing_pending) {
+                        // Actualizar registro existente
+                        $stmt = $conn->prepare("
+                            UPDATE pending_registrations 
+                            SET nombre = ?, password_hash = ?, telefono = NULL, direccion = NULL, 
+                                verification_token = ?, expires_at = ?, attempts = attempts + 1,
+                                ip_address = ?, user_agent = ?
+                            WHERE email = ?
+                        ");
+                        $stmt->execute([
+                            $nombre, $password_hash, 
+                            $codigo_verificacion, $expires_at, $ip_address, $user_agent, $email
+                        ]);
+                        $pending_id = $existing_pending['id'];
+                    } else {
+                        // Crear nuevo registro
+                        $stmt = $conn->prepare("
+                            INSERT INTO pending_registrations 
+                            (nombre, email, password_hash, telefono, direccion, verification_token, expires_at, ip_address, user_agent) 
+                            VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?)
+                        ");
+                        $stmt->execute([
+                            $nombre, $email, $password_hash, 
+                            $codigo_verificacion, $expires_at, $ip_address, $user_agent
+                        ]);
+                        $pending_id = $conn->lastInsertId();
                     }
                     
-                    // ===============================
-                    // ENVIAR VERIFICACIÓN AUTOMÁTICA
-                    // ===============================
+                    // ENVIAR CÓDIGO DE 6 DÍGITOS POR EMAIL
+                    $verification_service = new VerificationService($conn);
+                    $email_sent = $verification_service->sendRegistrationVerificationCode($email, $nombre, $codigo_verificacion);
                     
-                    require_once __DIR__ . '/config/verification.php';
-                    $verification = new VerificationService($conn);
-                    
-                    $verification_sent = false;
-                    
-                    try {
-                        $email_sent = $verification->sendEmailVerification($nuevo_id, $email);
-                        if ($email_sent) {
-                            $verification_sent = true;
-                            
-                            // Log del envío automático
-                            $stmt_log = $conn->prepare("
-                                INSERT INTO verification_logs (user_id, type, action, method, contact_info, ip_address, success) 
-                                VALUES (?, 'email_verification', 'sent', 'email', ?, ?, 1)
-                            ");
-                            $stmt_log->execute([$nuevo_id, maskEmail($email), $_SERVER['REMOTE_ADDR'] ?? '']);
-                        }
-                    } catch (Exception $e) {
-                        error_log("Error enviando verificación automática: " . $e->getMessage());
-                    }
-                    
-                    // Mensaje y redirección según si se envió verificación
-                    if ($verification_sent) {
-                        $success = '¡Cuenta creada exitosamente! 📧 Te hemos enviado un código de verificación a tu email.';
-                        // JavaScript para redirigir a verificación
+                    if ($email_sent) {
+                        $success = 'Registro iniciado. Te hemos enviado un código de 6 dígitos a tu email. Tienes 24 horas para verificar tu cuenta.';
+                        
+                        // Redirigir a página de verificación con email
                         echo '<script>
                             setTimeout(function() {
-                                window.location.href = "verificar_email.php?first_time=1";
+                                window.location.href = "verify_registration_code.php?email=' . urlencode($email) . '";
                             }, 3000);
                         </script>';
                     } else {
-                        $success = '¡Cuenta creada exitosamente! Puedes verificar tu email desde tu perfil.';
-                        // JavaScript para redirigir al inicio
-                        echo '<script>
-                            setTimeout(function() {
-                                window.location.href = "index.php";
-                            }, 2000);
-                        </script>';
+                        $error = 'Error enviando código de verificación. Intenta nuevamente.';
                     }
                 }
             }
         } catch (Exception $e) {
-            $error = 'Error al crear la cuenta: ' . $e->getMessage();
+            $error = 'Error al procesar el registro: ' . $e->getMessage();
+            error_log("Error en registro: " . $e->getMessage());
         }
     }
 }
@@ -266,37 +259,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <div class="col-lg-5 d-none d-lg-block">
                             <div class="register-image">
                                 <div class="text-center" style="z-index: 1;">
-                                    <i class="fas fa-user-plus fa-4x mb-4"></i>
-                                    <h2 class="brand-title">¡Únete a Nosotros!</h2>
-                                    <p class="lead mb-4">Crea tu cuenta en segundos y empieza a comprar</p>
+                                    <i class="fas fa-envelope-circle-check fa-4x mb-4"></i>
+                                    <h2 class="brand-title">Código de 6 Dígitos</h2>
+                                    <p class="lead mb-4">Te enviamos un código a tu email para verificar</p>
                                     
                                     <div class="text-start">
                                         <div class="d-flex align-items-center mb-3">
-                                            <i class="fas fa-zap fa-2x me-3"></i>
-                                            <div>
-                                                <strong>Registro Rápido</strong><br>
-                                                <small>Solo nombre, email y contraseña</small>
-                                            </div>
-                                        </div>
-                                        <div class="d-flex align-items-center mb-3">
                                             <i class="fas fa-shield-check fa-2x me-3"></i>
                                             <div>
-                                                <strong>Verificación Automática</strong><br>
-                                                <small>Te enviamos el código al instante</small>
+                                                <strong>Mayor Seguridad</strong><br>
+                                                <small>Solo cuentas verificadas</small>
                                             </div>
                                         </div>
                                         <div class="d-flex align-items-center mb-3">
-                                            <i class="fas fa-user-cog fa-2x me-3"></i>
+                                            <i class="fas fa-clock fa-2x me-3"></i>
                                             <div>
-                                                <strong>Completa Después</strong><br>
-                                                <small>Agrega teléfono y direcciones en tu perfil</small>
+                                                <strong>24 Horas</strong><br>
+                                                <small>Tiempo para verificar tu email</small>
+                                            </div>
+                                        </div>
+                                        <div class="d-flex align-items-center mb-3">
+                                            <i class="fas fa-key fa-2x me-3"></i>
+                                            <div>
+                                                <strong>Código de 6 Dígitos</strong><br>
+                                                <small>Fácil de ingresar</small>
                                             </div>
                                         </div>
                                         <div class="d-flex align-items-center">
-                                            <i class="fas fa-shopping-cart fa-2x me-3"></i>
+                                            <i class="fas fa-user-check fa-2x me-3"></i>
                                             <div>
-                                                <strong>Compra Inmediata</strong><br>
-                                                <small>Tu carrito se guarda automáticamente</small>
+                                                <strong>Activación Automática</strong><br>
+                                                <small>Ingresa el código y listo</small>
                                             </div>
                                         </div>
                                     </div>
@@ -309,7 +302,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             <div class="register-form">
                                 <div class="text-center mb-4">
                                     <h3><i class="fas fa-user-plus"></i> Crear Cuenta Nueva</h3>
-                                    <p class="text-muted">Llena tus datos para empezar</p>
+                                    <p class="text-muted">Te enviaremos un código de 6 dígitos</p>
                                 </div>
                                 
                                 <?php if ($error): ?>
@@ -377,14 +370,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                         </div>
                                     </div>
                                     
-                                    <!-- Nota informativa -->
+                                    <!-- Nota informativa actualizada -->
                                     <div class="alert alert-info">
                                         <i class="fas fa-info-circle"></i>
-                                        <strong>Después del registro podrás agregar:</strong>
+                                        <strong>Proceso de verificación:</strong>
                                         <ul class="mb-0 mt-2">
-                                            <li>📱 Número de teléfono</li>
-                                            <li>🏠 Direcciones de envío</li>
-                                            <li>💳 Métodos de pago</li>
+                                            <li>Te enviaremos un código de 6 dígitos</li>
+                                            <li>Tienes 24 horas para verificar</li>
+                                            <li>Sin verificación no puedes iniciar sesión</li>
+                                            <li>Solo entonces se crea tu cuenta</li>
                                         </ul>
                                     </div>
                                     
@@ -397,7 +391,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     </div>
                                     
                                     <button type="submit" class="btn btn-register btn-primary w-100 mb-3">
-                                        <i class="fas fa-user-plus"></i> Crear Mi Cuenta
+                                        <i class="fas fa-key"></i> Enviar Código
                                     </button>
                                     
                                     <small class="text-muted">* Campos requeridos</small>
@@ -546,7 +540,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Mostrar loading en el botón
             const submitBtn = this.querySelector('button[type="submit"]');
             const originalText = submitBtn.innerHTML;
-            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Creando cuenta...';
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enviando código...';
             submitBtn.disabled = true;
             
             // Si hay error, restaurar el botón después de 10 segundos

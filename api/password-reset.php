@@ -130,7 +130,21 @@ try {
                 throw new Exception('La contraseña debe tener al menos 6 caracteres');
             }
             
-            // Buscar código válido
+            // ✅ NUEVO: Verificar que el usuario existe Y obtener contraseña actual PRIMERO
+            $stmt = $conn->prepare("SELECT id, nombre, email, password FROM clientes WHERE id = ? AND activo = 1");
+            $stmt->execute([$user_id]);
+            $user = $stmt->fetch();
+            
+            if (!$user) {
+                throw new Exception('Usuario no encontrado o inactivo');
+            }
+            
+            // ✅ NUEVO: Verificar que la nueva contraseña sea DIFERENTE a la actual
+            if (password_verify($new_password, $user['password'])) {
+                throw new Exception('La nueva contraseña debe ser diferente a la contraseña actual');
+            }
+            
+            // Ahora sí buscar código válido
             $stmt = $conn->prepare("
                 SELECT * FROM verification_codes 
                 WHERE user_id = ? AND type = 'password_reset' AND code = ? 
@@ -162,15 +176,6 @@ try {
                 error_log("EXISTING CODES FOR USER $user_id: " . print_r($existing_codes, true));
                 
                 throw new Exception('Código inválido, expirado o demasiados intentos');
-            }
-            
-            // Verificar que el usuario existe
-            $stmt = $conn->prepare("SELECT id, nombre, email FROM clientes WHERE id = ? AND activo = 1");
-            $stmt->execute([$user_id]);
-            $user = $stmt->fetch();
-            
-            if (!$user) {
-                throw new Exception('Usuario no encontrado o inactivo');
             }
             
             // ✅ CORREGIDO: Iniciar transacción para atomicidad
@@ -435,7 +440,7 @@ function getPasswordResetConfirmationTemplate($nombre = '') {
             <p>Te confirmamos que la contraseña de tu cuenta en Novedades Ashley ha sido restablecida exitosamente el día " . date('d/m/Y') . " a las " . date('H:i:s') . ".</p>
             
             <div class='info'>
-                <strong>🔐 ¿Qué hacer ahora?</strong><br>
+                <strong>📋 ¿Qué hacer ahora?</strong><br>
                 • Ya puedes iniciar sesión con tu nueva contraseña<br>
                 • Guarda tu contraseña en un lugar seguro<br>
                 • No compartas tu contraseña con nadie<br>

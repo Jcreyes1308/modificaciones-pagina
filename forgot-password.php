@@ -470,7 +470,7 @@ if (isset($_GET['step']) && $_GET['step'] == '2' && isset($_SESSION['reset_user_
                                         <hr class="my-4">
                                         
                                         <div class="d-flex justify-content-between">
-                                            <a href="forgot-password.php" class="btn btn-outline-secondary">
+                                            <a href="forgot-password.php" class="btn btn-outline-secondary" onclick="clearSessionData()">
                                                 <i class="fas fa-arrow-left"></i> Cambiar método
                                             </a>
                                             <button type="button" class="btn btn-outline-primary" id="resend_btn">
@@ -576,18 +576,129 @@ if (isset($_GET['step']) && $_GET['step'] == '2' && isset($_SESSION['reset_user_
             }, 10000);
         });
         
-        // Botón de reenviar código
+        // Botón de reenviar código - FUNCIONALIDAD REAL
         document.getElementById('resend_btn')?.addEventListener('click', function() {
-            this.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Reenviando...';
-            this.disabled = true;
+            const button = this;
+            const originalText = button.innerHTML;
             
-            // Simular reenvío (aquí harías la llamada AJAX real)
-            setTimeout(() => {
-                alert('Código reenviado correctamente');
-                this.innerHTML = '<i class="fas fa-redo"></i> Reenviar código';
-                this.disabled = false;
-            }, 2000);
+            // Validar que tengamos los datos necesarios
+            if (!window.sessionData || !window.sessionData.reset_user_id) {
+                alert('Error: Datos de sesión no encontrados. Recarga la página.');
+                return;
+            }
+            
+            // Mostrar loading
+            button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Reenviando...';
+            button.disabled = true;
+            
+            // Preparar datos para la API
+            const formData = new FormData();
+            formData.append('action', 'send_reset_code');
+            formData.append('method', window.sessionData.reset_method);
+            formData.append('user_id', window.sessionData.reset_user_id);
+            formData.append('contact', window.sessionData.reset_contact);
+            
+            // Llamada AJAX real a la API
+            fetch('api/password-reset.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Éxito - mostrar mensaje
+                    showNotification('success', data.message);
+                    
+                    // Si hay código de debug, mostrarlo
+                    if (data.data && data.data.debug_code) {
+                        showNotification('info', 'Código de prueba: ' + data.data.debug_code, 10000);
+                    }
+                    
+                    // Implementar cooldown de 2 minutos
+                    startResendCooldown(button, 120); // 120 segundos = 2 minutos
+                    
+                } else {
+                    // Error - mostrar mensaje de error
+                    showNotification('error', data.message || 'Error al reenviar código');
+                    
+                    // Restaurar botón
+                    button.innerHTML = originalText;
+                    button.disabled = false;
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showNotification('error', 'Error de conexión. Verifica tu internet.');
+                
+                // Restaurar botón
+                button.innerHTML = originalText;
+                button.disabled = false;
+            });
         });
+        
+        // Función para mostrar notificaciones
+        function showNotification(type, message, duration = 5000) {
+            // Crear elemento de notificación
+            const notification = document.createElement('div');
+            notification.className = `alert alert-${type === 'success' ? 'success' : type === 'error' ? 'danger' : 'info'} alert-dismissible fade show`;
+            notification.style.cssText = 'position: fixed; top: 20px; right: 20px; z-index: 9999; min-width: 300px; max-width: 500px;';
+            
+            notification.innerHTML = `
+                <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-triangle' : 'info-circle'}"></i>
+                ${message}
+                <button type="button" class="btn-close" onclick="this.parentElement.remove()"></button>
+            `;
+            
+            document.body.appendChild(notification);
+            
+            // Auto-remover después del tiempo especificado
+            setTimeout(() => {
+                if (notification.parentElement) {
+                    notification.remove();
+                }
+            }, duration);
+        }
+        
+        // Función para manejar el cooldown del botón de reenvío
+        function startResendCooldown(button, seconds) {
+            let remaining = seconds;
+            const originalText = '<i class="fas fa-redo"></i> Reenviar código';
+            
+            const updateButton = () => {
+                if (remaining > 0) {
+                    const minutes = Math.floor(remaining / 60);
+                    const secs = remaining % 60;
+                    button.innerHTML = `<i class="fas fa-clock"></i> Espera ${minutes}:${secs.toString().padStart(2, '0')}`;
+                    button.disabled = true;
+                    remaining--;
+                    setTimeout(updateButton, 1000);
+                } else {
+                    button.innerHTML = originalText;
+                    button.disabled = false;
+                }
+            };
+            
+            updateButton();
+        }
+        
+        // Exponer datos de sesión para JavaScript (solo si estamos en step 2)
+        <?php if ($step === 2 && isset($_SESSION['reset_user_id'])): ?>
+        window.sessionData = {
+            reset_user_id: <?= $_SESSION['reset_user_id'] ?>,
+            reset_method: '<?= htmlspecialchars($_SESSION['reset_method'] ?? '') ?>',
+            reset_contact: '<?= htmlspecialchars($_SESSION['reset_contact'] ?? '') ?>',
+            reset_masked: '<?= htmlspecialchars($_SESSION['reset_masked'] ?? '') ?>'
+        };
+        <?php endif; ?>
+        
+        // Función para limpiar datos de sesión al cambiar método
+        function clearSessionData() {
+            // Opcional: hacer llamada AJAX para limpiar sesión en servidor
+            // Por ahora solo limpiamos el lado cliente
+            if (window.sessionData) {
+                delete window.sessionData;
+            }
+        }
         
         // Animación de entrada
         document.addEventListener('DOMContentLoaded', function() {

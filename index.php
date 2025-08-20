@@ -634,35 +634,55 @@ try {
     <script src="assets/js/carrito.js"></script>
     
     <script>
-        // Función para cerrar sesión
-        async function cerrarSesion() {
-            if (!confirm('¿Estás seguro de que quieres cerrar sesión?')) {
-                return;
-            }
-            
-            try {
-                const formData = new FormData();
-                formData.append('action', 'logout');
-                
-                const response = await fetch('api/auth.php', {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                const data = await response.json();
-                
-                if (data.success) {
-                    alert('Sesión cerrada correctamente');
-                    window.location.reload();
-                } else {
-                    alert('Error al cerrar sesión: ' + data.message);
-                }
-                
-            } catch (error) {
-                console.error('Error:', error);
-                alert('Error al cerrar sesión');
-            }
+        // Función para cerrar sesión - CORREGIDA
+async function cerrarSesion() {
+    if (!confirm('¿Estás seguro de que quieres cerrar sesión?')) {
+        return;
+    }
+    
+    try {
+        const formData = new FormData();
+        formData.append('action', 'logout');
+        
+        const response = await fetch('api/auth.php', {
+            method: 'POST',
+            body: formData
+        });
+        
+        // NUEVO: Verificar que la respuesta sea válida
+        if (!response.ok) {
+            throw new Error(`Error HTTP: ${response.status}`);
         }
+        
+        // NUEVO: Verificar que sea JSON
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            throw new Error('El servidor no devolvió JSON válido');
+        }
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            alert('Sesión cerrada correctamente');
+            // CORREGIDO: Redirigir al index, no recargar
+            window.location.href = 'index.php';
+        } else {
+            alert('Error al cerrar sesión: ' + data.message);
+        }
+        
+    } catch (error) {
+        console.error('Error completo:', error);
+        
+        // NUEVO: Manejo de errores más específico
+        if (error.name === 'TypeError' && error.message.includes('Failed to fetch')) {
+            alert('Error de conexión. Verifica tu internet.');
+        } else if (error.message.includes('JSON')) {
+            alert('Error del servidor. Intenta nuevamente.');
+        } else {
+            alert('Error al cerrar sesión: ' + error.message);
+        }
+    }
+}
         
         // Función para mostrar categorías
         function mostrarCategorias() {

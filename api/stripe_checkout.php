@@ -1,8 +1,11 @@
 <?php
-// api/stripe_checkout.php - API integrada con Stripe para pagos reales
+// api/stripe_checkout.php - API integrada con Stripe para pagos reales + NOTIFICACIONES
 session_start();
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../config/stripe_config.php';
+
+// ✅ NUEVA LÍNEA: Cargar sistema de notificaciones
+require_once __DIR__ . '/../config/notifications.php';
 
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
@@ -287,8 +290,37 @@ try {
                     ])
                 ]);
                 
-                // Confirmar transacción
+                // Confirmar transacción ANTES de intentar enviar notificaciones
                 $conn->commit();
+                
+                // ✅ NUEVO: Enviar notificación automática de confirmación
+                // Se ejecuta DESPUÉS del commit para no afectar la transacción principal
+                try {
+                    $notification_service = new OrderNotificationService($conn);
+                    $notification_sent = $notification_service->sendOrderConfirmation($pedido_id);
+                    
+                    if ($notification_sent) {
+                        logStripeActivity('success', 'Email de confirmación enviado', [
+                            'order_id' => $pedido_id,
+                            'numero_pedido' => $numero_pedido,
+                            'user_id' => $_SESSION['usuario_id']
+                        ]);
+                    } else {
+                        logStripeActivity('warning', 'Error enviando email de confirmación', [
+                            'order_id' => $pedido_id,
+                            'numero_pedido' => $numero_pedido,
+                            'user_id' => $_SESSION['usuario_id']
+                        ]);
+                    }
+                } catch (Exception $e) {
+                    // Log del error pero NO fallar el proceso principal
+                    logStripeActivity('error', 'Error en notificación automática', [
+                        'order_id' => $pedido_id,
+                        'error' => $e->getMessage(),
+                        'user_id' => $_SESSION['usuario_id']
+                    ]);
+                    error_log("Error en notificación para pedido {$pedido_id}: " . $e->getMessage());
+                }
                 
                 logStripeActivity('success', 'Pedido creado exitosamente', [
                     'payment_intent_id' => $payment_intent_id,
@@ -386,7 +418,7 @@ echo json_encode($response, JSON_UNESCAPED_UNICODE);
 exit;
 
 // ===================================
-// FUNCIONES AUXILIARES
+// FUNCIONES AUXILIARES (MANTENIDAS IGUAL)
 // ===================================
 
 function createOrGetStripeCustomer($cliente_data) {
